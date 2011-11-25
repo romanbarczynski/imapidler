@@ -13,7 +13,8 @@ class IMAPIdler(object):
     FetchingError = Exception
 
     def __init__(self, host, login, password, port=143,
-                 source='INBOX', dest='INBOX.done', idle_timeout=60):
+                 source='INBOX', dest='INBOX.done', idle_timeout=60,
+                 processor=None):
         self.server = None
         self.in_idle = False
         self.logger = getLogger('imapidler')
@@ -24,6 +25,8 @@ class IMAPIdler(object):
         self.source = source
         self.dest = dest
         self.idle_timeout = idle_timeout
+        if processor:
+            self.process_message = processor
 
     def _connect(self):
         try:
