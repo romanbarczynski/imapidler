@@ -15,6 +15,7 @@ class IMAPIdler(object):
     def __init__(self, host, login, password, port=143,
                  source='INBOX', dest='INBOX.done', idle_timeout=60):
         self.server = None
+        self.in_idle = False
         self.logger = getLogger('imapidler')
         self.host = host
         self.login = login
@@ -78,6 +79,7 @@ class IMAPIdler(object):
 
     def _idle(self):
         self.server.idle()
+        self.in_idle = True
 
         try:
             while True:
@@ -87,8 +89,10 @@ class IMAPIdler(object):
                     if len(idle):
                         # yay! new messages
                         self.server.idle_done()
+                        self.in_idle = False
                         self._fetch()
                         self.server.idle()
+                        self.in_idle = True
                 except IMAPClient.Error, e:
                     self.logger.error("Error in Idler loop: %s", e)
                     time.sleep(10)
@@ -99,6 +103,10 @@ class IMAPIdler(object):
 
     def _close(self):
         self.logger.debug("Closing server connection...")
+        if self.in_idle:
+            try:
+                self.server.idle_done()
+            except Exception: pass
         try:
             self.server.close_folder()
         except Exception: pass
