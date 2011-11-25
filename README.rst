@@ -1,6 +1,7 @@
 ==========
 IMAP Idler
 ==========
+.. highlight:: python
 
 **IMAPIdler** is helper class to easily create IMAP robots with IDLE support.
 
