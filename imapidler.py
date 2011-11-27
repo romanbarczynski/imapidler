@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from imapclient import IMAPClient
 from logging import getLogger
-import time
+import time, socket
 
 __author__ = 'romke'
 __all__ = ['IMAPIdler']
@@ -36,10 +36,11 @@ class IMAPIdler(object):
             self.server = IMAPClient(self.host, port=self.port)
             #, use_uid=True, ssl=False)
             self.server.login(self.login, self.password)
+            self.logger.debug("Selecting '%s'...", self.source)
             info = self.server.select_folder(self.source)
             self.logger.debug("Connect info: %s", info)
 
-        except IMAPClient.Error, e:
+        except (IMAPClient.Error, socket.error), e:
             self.logger.error("Cannot connect to server %s:%d, reason: %s",
                               self.host, self.port, e)
             self.server = None
@@ -81,30 +82,42 @@ class IMAPIdler(object):
             raise IMAPIdler.FetchingError()
 
     def _idle(self):
+        """
+        Enters IMAP server IDLE, sends NOOP every 5 minutes so server
+        should not drop connection. If during IDLE new mail arives it
+        calls _fetch to process mail in it and after that returns to
+        IDLE state.
+        """
         self.server.idle()
         self.in_idle = True
 
-        try:
-            while True:
-                try:
-                    self.logger.debug("Idler loop...")
-                    idle = self.server.idle_check(timeout=self.idle_timeout)
-                    if len(idle):
-                        # yay! new messages
-                        self.server.idle_done()
-                        self.in_idle = False
-                        self._fetch()
-                        self.server.idle()
-                        self.in_idle = True
-                except IMAPClient.Error, e:
-                    self.logger.error("Error in Idler loop: %s", e)
-                    time.sleep(10)
+        while True:
+            try:
+                self.logger.debug("Idler loop...")
+                idle = self.server.idle_check(timeout=self.idle_timeout)
+                if len(idle):
+                    # yay! new messages
+                    self.server.idle_done()
+                    self.in_idle = False
+                    self._fetch()
+                    self.server.idle()
+                    self.in_idle = True
+                else:
+                    self.server.idle_done()
+                    self.in_idle = False
+                    # noop to prevent server dropping connections
+                    self.server.noop()
+                    self.server.idle()
+                    self.in_idle = True
 
-        except (KeyboardInterrupt, SystemExit):
-            self.logger.info("Received interrupt, finishing...")
-            self._close()
+            except IMAPClient.Error, e:
+                self.logger.error("Error in Idler loop: %s", e)
+                time.sleep(10)
 
     def _close(self):
+        """
+        Closes server connection. If in IDLE drops IDLE mode.
+        """
         self.logger.debug("Closing server connection...")
         if self.in_idle:
             try:
@@ -118,11 +131,27 @@ class IMAPIdler(object):
         except Exception: pass
 
     def run(self):
-        self._connect()
-        self._fetch()
-        self._idle()
+        """
+        Runs fetch and after that enters IDLE mode.
+        """
+        try:
+            while True:
+                try:
+                    self._connect()
+                    self._fetch()
+                    self._idle()
+                except socket.error, e:
+                    # server dropped us, give it some time and try again
+                    self.logger.error("%s", e)
+                    time.sleep(60)
+        except (KeyboardInterrupt, SystemExit):
+            self.logger.info("Received interrupt, finishing...")
+            self._close()
 
     def runonce(self):
+        """
+        Only runs fetch mode, exits after finishing.
+        """
         self._connect()
         self._fetch()
         self._close()
